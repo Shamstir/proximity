@@ -40,31 +40,31 @@ class Group {
           isEncrypted: encrypted,
         );
       }
-    } catch (e) {
-    }
+    } catch (_) {}
     return null;
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'agenda': agenda,
-    'hostId': hostId,
-    'hostName': hostName,
-    'createdAt': createdAt.millisecondsSinceEpoch,
-    'isEncrypted': isEncrypted,
-  };
+        'id': id,
+        'name': name,
+        'agenda': agenda,
+        'hostId': hostId,
+        'hostName': hostName,
+        'createdAt': createdAt.millisecondsSinceEpoch,
+        'isEncrypted': isEncrypted,
+      };
 
   factory Group.fromJson(Map<String, dynamic> json) => Group(
-    id: json['id'],
-    name: json['name'],
-    agenda: json['agenda'],
-    hostId: json['hostId'],
-    hostName: json['hostName'],
-    createdAt: DateTime.fromMillisecondsSinceEpoch(json['createdAt']),
-    isEncrypted: json['isEncrypted'] ?? true,
-  );
+        id: json['id'],
+        name: json['name'],
+        agenda: json['agenda'],
+        hostId: json['hostId'],
+        hostName: json['hostName'],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(json['createdAt']),
+        isEncrypted: json['isEncrypted'] ?? true,
+      );
 
   @override
-  String toString() => 'Group($name, agenda: $agenda, host: $hostName, encrypted: $isEncrypted)';
+  String toString() =>
+      'Group($name, agenda: $agenda, host: $hostName, encrypted: $isEncrypted)';
 }

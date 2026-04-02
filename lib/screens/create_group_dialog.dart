@@ -9,7 +9,8 @@ class CreateGroupDialog extends StatefulWidget {
   @override
   State<CreateGroupDialog> createState() => _CreateGroupDialogState();
 
-  static Future<({String name, String agenda, bool isEncrypted})?> show(BuildContext context) {
+  static Future<({String name, String agenda, bool isEncrypted})?> show(
+      BuildContext context) {
     return showGeneralDialog<({String name, String agenda, bool isEncrypted})>(
       context: context,
       barrierDismissible: true,
@@ -18,7 +19,8 @@ class CreateGroupDialog extends StatefulWidget {
       transitionDuration: const Duration(milliseconds: 300),
       pageBuilder: (context, anim1, anim2) => const CreateGroupDialog(),
       transitionBuilder: (context, anim1, anim2, child) {
-        final curve = CurvedAnimation(parent: anim1, curve: Curves.easeOutCubic);
+        final curve =
+            CurvedAnimation(parent: anim1, curve: Curves.easeOutCubic);
         return SlideTransition(
           position: Tween<Offset>(
             begin: const Offset(0, 0.08),
@@ -42,11 +44,11 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
   bool _isEncrypted = true;
 
   TextStyle get _monoFont => GoogleFonts.jetBrainsMono(
-    fontSize: 13,
-    fontWeight: FontWeight.w400,
-    height: 1.5,
-    color: AppColors.primary,
-  );
+        fontSize: 13,
+        fontWeight: FontWeight.w400,
+        height: 1.5,
+        color: AppColors.primary,
+      );
 
   @override
   void dispose() {
@@ -94,7 +96,6 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-
                       Row(
                         children: [
                           Container(
@@ -125,18 +126,12 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 28),
-
-
                       Container(
                         height: 0.5,
                         color: AppColors.divider,
                       ),
-
                       const SizedBox(height: 24),
-
-
                       Text(
                         "NAME",
                         style: GoogleFonts.jetBrainsMono(
@@ -147,8 +142,6 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                         ),
                       ),
                       const SizedBox(height: 8),
-
-
                       Container(
                         decoration: BoxDecoration(
                           color: AppColors.card,
@@ -166,7 +159,8 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                           decoration: InputDecoration(
                             hintText: "group name",
                             hintStyle: _monoFont.copyWith(
-                              color: AppColors.secondary.withValues(alpha: 0.35),
+                              color:
+                                  AppColors.secondary.withValues(alpha: 0.35),
                             ),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
@@ -183,10 +177,7 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                           autofocus: true,
                         ),
                       ),
-
                       const SizedBox(height: 20),
-
-
                       Text(
                         "AGENDA",
                         style: GoogleFonts.jetBrainsMono(
@@ -197,8 +188,6 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                         ),
                       ),
                       const SizedBox(height: 8),
-
-
                       Container(
                         decoration: BoxDecoration(
                           color: AppColors.card,
@@ -218,7 +207,8 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                           decoration: InputDecoration(
                             hintText: "what's this about?",
                             hintStyle: _monoFont.copyWith(
-                              color: AppColors.secondary.withValues(alpha: 0.35),
+                              color:
+                                  AppColors.secondary.withValues(alpha: 0.35),
                             ),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
@@ -228,14 +218,13 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 20),
-
-
                       GestureDetector(
-                        onTap: () => setState(() => _isEncrypted = !_isEncrypted),
+                        onTap: () =>
+                            setState(() => _isEncrypted = !_isEncrypted),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
                           decoration: BoxDecoration(
                             color: AppColors.card,
                             borderRadius: BorderRadius.circular(10),
@@ -249,8 +238,12 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                           child: Row(
                             children: [
                               Icon(
-                                _isEncrypted ? Icons.lock_rounded : Icons.lock_open_rounded,
-                                color: _isEncrypted ? AppColors.primary : AppColors.secondary,
+                                _isEncrypted
+                                    ? Icons.lock_rounded
+                                    : Icons.lock_open_rounded,
+                                color: _isEncrypted
+                                    ? AppColors.primary
+                                    : AppColors.secondary,
                                 size: 16,
                               ),
                               const SizedBox(width: 10),
@@ -259,11 +252,15 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      _isEncrypted ? "ENCRYPTED" : "UNENCRYPTED",
+                                      _isEncrypted
+                                          ? "ENCRYPTED"
+                                          : "UNENCRYPTED",
                                       style: GoogleFonts.jetBrainsMono(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w600,
-                                        color: _isEncrypted ? AppColors.primary : AppColors.secondary,
+                                        color: _isEncrypted
+                                            ? AppColors.primary
+                                            : AppColors.secondary,
                                         letterSpacing: 1.2,
                                       ),
                                     ),
@@ -275,7 +272,8 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                                       style: GoogleFonts.jetBrainsMono(
                                         fontSize: 9,
                                         fontWeight: FontWeight.w400,
-                                        color: AppColors.secondary.withValues(alpha: 0.6),
+                                        color: AppColors.secondary
+                                            .withValues(alpha: 0.6),
                                       ),
                                     ),
                                   ],
@@ -286,25 +284,24 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                                 width: 40,
                                 child: Switch(
                                   value: _isEncrypted,
-                                  onChanged: (v) => setState(() => _isEncrypted = v),
-                                  activeColor: AppColors.primary,
-                                  activeTrackColor: AppColors.primary.withValues(alpha: 0.3),
+                                  onChanged: (v) =>
+                                      setState(() => _isEncrypted = v),
+                                  activeThumbColor: AppColors.primary,
+                                  activeTrackColor:
+                                      AppColors.primary.withValues(alpha: 0.3),
                                   inactiveThumbColor: AppColors.secondary,
                                   inactiveTrackColor: AppColors.divider,
-                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
                                 ),
                               ),
                             ],
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 28),
-
-
                       Row(
                         children: [
-
                           Expanded(
                             child: GestureDetector(
                               onTap: () => Navigator.of(context).pop(),
@@ -331,15 +328,16 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                             ),
                           ),
                           const SizedBox(width: 12),
-
                           Expanded(
                             child: GestureDetector(
-                              onTapDown: (_) => setState(() => _isCreateHeld = true),
+                              onTapDown: (_) =>
+                                  setState(() => _isCreateHeld = true),
                               onTapUp: (_) {
                                 setState(() => _isCreateHeld = false);
                                 _handleCreate();
                               },
-                              onTapCancel: () => setState(() => _isCreateHeld = false),
+                              onTapCancel: () =>
+                                  setState(() => _isCreateHeld = false),
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 100),
                                 height: 46,
@@ -353,10 +351,10 @@ class _CreateGroupDialogState extends State<CreateGroupDialog> {
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(
+                                    const Icon(
                                       Icons.arrow_forward_rounded,
-                                      color: AppColors.background,
                                       size: 14,
+                                      color: AppColors.background,
                                     ),
                                     const SizedBox(width: 6),
                                     Text(

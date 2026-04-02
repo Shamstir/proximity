@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -97,21 +98,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<bool> _requestPermissions() async {
     setState(() => _status = "Requesting permissions...");
 
-    Map<Permission, PermissionStatus> statuses = await [
-      Permission.bluetooth,
+    if (!Platform.isAndroid) return true;
+
+    final requiredPermissions = <Permission>[
+      Permission.location,
       Permission.bluetoothAdvertise,
       Permission.bluetoothConnect,
       Permission.bluetoothScan,
-      Permission.location,
       Permission.nearbyWifiDevices,
-    ].request();
+    ];
 
-    bool allGranted = statuses.values.every(
-      (status) => status.isGranted || status.isLimited,
-    );
+    final statuses = await requiredPermissions.request();
+    final deniedPermissions = <String>[];
 
-    if (!allGranted) {
-      setState(() => _status = "Permissions denied");
+    void checkPermission(Permission permission, String label) {
+      final status = statuses[permission];
+      if (status == null || (!status.isGranted && !status.isLimited)) {
+        deniedPermissions.add(label);
+      }
+    }
+
+    checkPermission(Permission.location, 'Location');
+    checkPermission(Permission.bluetoothAdvertise, 'Bluetooth advertise');
+    checkPermission(Permission.bluetoothConnect, 'Bluetooth connect');
+    checkPermission(Permission.bluetoothScan, 'Bluetooth scan');
+    checkPermission(Permission.nearbyWifiDevices, 'Nearby Wi-Fi devices');
+
+    if (deniedPermissions.isNotEmpty) {
+      setState(() {
+        _status = "Permissions denied: ${deniedPermissions.join(', ')}";
+      });
+      return false;
+    }
+
+    final locationServiceStatus = await Permission.location.serviceStatus;
+    if (locationServiceStatus != ServiceStatus.enabled) {
+      setState(() => _status = "Turn on Location services");
       return false;
     }
 
@@ -119,6 +141,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _handleCreateNetwork(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final mesh = Provider.of<MeshService>(context, listen: false);
+
     if (_nameController.text.trim().isEmpty) {
       setState(() => _status = "Enter a name first");
       return;
@@ -138,8 +164,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-    final mesh = Provider.of<MeshService>(context, listen: false);
-    
     await mesh.stopMesh();
     mesh.initialize(_nameController.text.trim());
 
@@ -158,7 +182,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _isProcessing = false;
         _status = "READY";
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: const Text('Failed to create group. Please try again.'),
           backgroundColor: Colors.red.shade800,
@@ -167,15 +191,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       return;
     }
 
-
     if (groupInfo.isEncrypted) {
       await mesh.initEncryption();
     }
 
     if (!mounted) return;
 
-    Navigator.push(
-      context,
+    navigator.push(
       MaterialPageRoute(
         builder: (_) => ChatScreen(
           isHost: true,
@@ -194,6 +216,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _handleJoinNetwork(BuildContext context) async {
+    final navigator = Navigator.of(context);
+
     if (_nameController.text.trim().isEmpty) {
       setState(() => _status = "Enter a name first");
       return;
@@ -212,8 +236,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     if (!mounted) return;
 
-    Navigator.push(
-      context,
+    navigator.push(
       MaterialPageRoute(
         builder: (_) => DiscoverGroupsScreen(
           userName: _nameController.text.trim(),
@@ -248,8 +271,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Spacer(flex: 2),
-
-
                   Column(
                     children: [
                       _buildGearIcon(),
@@ -267,13 +288,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                     ],
                   ),
-
                   const Spacer(),
-
                   _buildNameField(),
-
                   const SizedBox(height: 40),
-
                   _buildPremiumButton(
                     label: "CREATE",
                     icon: Icons.add_rounded,
@@ -293,9 +310,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     isPrimary: false,
                     controller: _joinBtnController,
                   ),
-
                   const Spacer(),
-
                   _buildStatusBar(),
                   const SizedBox(height: 32),
                 ],
@@ -316,60 +331,60 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
       },
       child: AnimatedBuilder(
-      animation: Listenable.merge([_gearAnimController, _pulseController]),
-      builder: (context, child) {
-        return SizedBox(
-          width: 100,
-          height: 100,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppColors.primary
-                        .withValues(alpha: _pulseAnimation.value * 0.4),
-                    width: 0.5,
+        animation: Listenable.merge([_gearAnimController, _pulseController]),
+        builder: (context, child) {
+          return SizedBox(
+            width: 100,
+            height: 100,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.primary
+                          .withValues(alpha: _pulseAnimation.value * 0.4),
+                      width: 0.5,
+                    ),
                   ),
                 ),
-              ),
-              Container(
-                width: 84,
-                height: 84,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppColors.primary
-                        .withValues(alpha: _pulseAnimation.value * 0.2),
-                    width: 0.5,
+                Container(
+                  width: 84,
+                  height: 84,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: AppColors.primary
+                          .withValues(alpha: _pulseAnimation.value * 0.2),
+                      width: 0.5,
+                    ),
                   ),
                 ),
-              ),
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(end: _gearTargetAngle),
-                duration: const Duration(milliseconds: 400),
-                curve: Curves.easeOutBack,
-                builder: (context, angle, child) {
-                  return Transform.rotate(
-                    angle: angle,
-                    child: child,
-                  );
-                },
-                child: Icon(
-                  Icons.enhanced_encryption,
-                  size: 42,
-                  color: AppColors.primary
-                      .withValues(alpha: 0.85 + _pulseAnimation.value * 0.15),
+                TweenAnimationBuilder<double>(
+                  tween: Tween<double>(end: _gearTargetAngle),
+                  duration: const Duration(milliseconds: 400),
+                  curve: Curves.easeOutBack,
+                  builder: (context, angle, child) {
+                    return Transform.rotate(
+                      angle: angle,
+                      child: child,
+                    );
+                  },
+                  child: Icon(
+                    Icons.enhanced_encryption,
+                    size: 42,
+                    color: AppColors.primary
+                        .withValues(alpha: 0.85 + _pulseAnimation.value * 0.15),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
-    ),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -460,8 +475,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Text(
                 label,
                 style: AppTextStyles.button.copyWith(
-                  color:
-                      isPrimary ? AppColors.background : AppColors.primary,
+                  color: isPrimary ? AppColors.background : AppColors.primary,
                 ),
               ),
             ],
@@ -482,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               width: 120,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(1),
-                child: LinearProgressIndicator(
+                child: const LinearProgressIndicator(
                   backgroundColor: AppColors.divider,
                   color: AppColors.primary,
                   minHeight: 1.5,

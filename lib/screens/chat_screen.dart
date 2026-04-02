@@ -7,17 +7,24 @@ import '../utils/constants.dart';
 import '../models/chat_message.dart';
 import '../models/group.dart';
 import '../services/mesh_service.dart';
+import 'fake_nfc_dialog.dart';
 
 class ChatScreen extends StatefulWidget {
   final bool isHost;
   final String userName;
   final Group? group;
-  
+
+  /// When true the user joined without the decryption key:
+  /// - Messages are shown as raw encrypted ciphertext.
+  /// - The message input is replaced with a locked observer banner.
+  final bool isObserver;
+
   const ChatScreen({
     super.key,
     required this.isHost,
     required this.userName,
     this.group,
+    this.isObserver = false,
   });
 
   @override
@@ -30,36 +37,41 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final FocusNode _focusNode = FocusNode();
   final List<ChatMessage> _messages = [];
   final List<AnimationController> _messageAnimControllers = [];
-  
+
   late MeshService _meshService;
   StreamSubscription? _messageSubscription;
   StreamSubscription? _statusSubscription;
   StreamSubscription? _leaderSubscription;
-  
+  StreamSubscription? _keyReceivedSubscription;
+
   String _connectionStatus = "Connecting...";
   int _peerCount = 0;
   bool _isLeader = false;
   bool _isSendHeld = false;
 
+  // Observer mode — updated if they later receive they key
+  bool _isObserver = false;
+
   TextStyle get _chatFont => GoogleFonts.jetBrainsMono(
-    fontSize: 13,
-    fontWeight: FontWeight.w400,
-    height: 1.6,
-  );
+        fontSize: 13,
+        fontWeight: FontWeight.w400,
+        height: 1.6,
+      );
 
   TextStyle get _chatFontSmall => GoogleFonts.jetBrainsMono(
-    fontSize: 10,
-    fontWeight: FontWeight.w400,
-    height: 1.4,
-  );
+        fontSize: 10,
+        fontWeight: FontWeight.w400,
+        height: 1.4,
+      );
 
   @override
   void initState() {
     super.initState();
-    
+
     _meshService = Provider.of<MeshService>(context, listen: false);
     _isLeader = widget.isHost;
-    
+    _isObserver = widget.isObserver;
+
     _messageSubscription = _meshService.messageStream.listen((meshMessage) {
       _addMessage(ChatMessage(
         id: meshMessage.id,
@@ -69,42 +81,67 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         senderName: meshMessage.senderName,
       ));
     });
-    
+
     _statusSubscription = _meshService.statusStream.listen((status) {
       setState(() {
         _connectionStatus = status;
         _peerCount = _meshService.peerCount;
       });
-      
+
       if (status.contains("leader") || status.contains("Leader")) {
         _addSystemMessage(status);
       }
     });
-    
+
     _meshService.peersStream.listen((_) {
       setState(() {
         _peerCount = _meshService.peerCount;
       });
     });
-    
+
     _leaderSubscription = _meshService.leaderChangeStream.listen((isNowLeader) {
       setState(() {
         _isLeader = isNowLeader;
       });
-      
+
       if (isNowLeader) {
         _addSystemMessage("You are now the group leader");
       } else {
         _addSystemMessage("Group ended — all members left");
       }
     });
-    
+
+    // If we're an observer and receive the key later (e.g. host shares it),
+    // promote us out of observer mode with an animation.
+    if (_isObserver) {
+      _keyReceivedSubscription =
+          _meshService.keyReceivedStream.listen((_) async {
+        _addSystemMessage(
+            "🔓 Key received via Nearby — messages now decrypted");
+        if (mounted) {
+          await FakeNfcTransferDialog.show(context, isSender: false);
+          if (mounted) {
+            setState(() => _isObserver = false);
+          }
+        }
+      });
+    }
+
     final groupName = widget.group?.name ?? "Mesh";
+    String welcomeText;
+    if (widget.isHost) {
+      welcomeText = "You created \"$groupName\"\nWaiting for others to join...";
+    } else if (_isObserver) {
+      welcomeText = "You joined \"$groupName\" as an Observer.\n"
+          "Messages appear as encrypted ciphertext.\n"
+          "You cannot send messages.";
+    } else {
+      welcomeText = "You joined \"$groupName\"\nSay hello!";
+    }
+
     _addMessage(ChatMessage(
       id: "system_welcome",
-      text: widget.isHost 
-          ? "You created \"$groupName\"\nWaiting for others to join..."
-          : "You joined \"$groupName\"\nSay hello!",
+      text: welcomeText,
       type: MessageType.received,
       timestamp: DateTime.now(),
       senderName: "System",
@@ -116,12 +153,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 350),
     );
-    
+
     setState(() {
       _messages.add(message);
       _messageAnimControllers.add(controller);
     });
-    
+
     controller.forward();
     _scrollToBottom();
   }
@@ -137,6 +174,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _sendMessage() {
+    if (_isObserver) return; // Safety guard
     final text = _textController.text.trim();
     if (text.isEmpty) return;
 
@@ -172,11 +210,79 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     Navigator.pop(context);
   }
 
+  // ── Host: share key with a specific connected peer ──────────────────────────
+  Future<void> _showShareKeyDialog() async {
+    final endpointIds = _meshService.connectedEndpoints;
+
+    if (endpointIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No peers connected yet.')),
+      );
+      return;
+    }
+
+    // Build a map: displayName -> endpointId
+    final Map<String, String> peerMap = {};
+    for (final entry in endpointIds.entries) {
+      peerMap[entry.value] = entry.key;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _ShareKeyDialog(
+        peerMap: peerMap,
+        onShare: (endpointId) async {
+          Navigator.of(ctx).pop();
+          // Show fake NFC animation on host side
+          await FakeNfcTransferDialog.show(context, isSender: true);
+          // Now actually push the key
+          await _meshService.shareKeyWithPeer(endpointId);
+          _addSystemMessage("Encryption key shared via Nearby 🔑");
+        },
+        groupKeyBase64: _meshService.groupKeyBase64,
+      ),
+    );
+  }
+
+  // ── NFC host exchange (existing feature, kept) ──────────────────────────────
+  Future<void> _startNfcHostExchange() async {
+    final nfc = _meshService.nfcService;
+    final nfcAvailable = await nfc.isAvailable();
+
+    if (!nfcAvailable) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('NFC not available on this device.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _NfcHostDialog(
+        meshService: _meshService,
+        onComplete: (String? joinerPubKey) async {
+          if (joinerPubKey != null) {
+            _addSystemMessage("New member's key exchanged via NFC");
+          }
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final groupName = widget.group?.name ?? (_isLeader ? "HOSTING" : "CONNECTED");
+    final groupName =
+        widget.group?.name ?? (_isLeader ? "HOSTING" : "CONNECTED");
     final groupAgenda = widget.group?.agenda;
-    
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: _buildAppBar(groupName, groupAgenda),
@@ -187,7 +293,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               onTap: () => _focusNode.unfocus(),
               child: ListView.builder(
                 controller: _scrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
                 itemCount: _messages.length,
                 itemBuilder: (context, index) {
                   return _buildAnimatedMessage(index);
@@ -195,7 +302,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-          _buildInputArea(),
+          _isObserver ? _buildObserverBanner() : _buildInputArea(),
         ],
       ),
     );
@@ -207,8 +314,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       elevation: 0,
       surfaceTintColor: Colors.transparent,
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new, 
-          color: AppColors.primary, 
+        icon: const Icon(
+          Icons.arrow_back_ios_new,
+          color: AppColors.primary,
           size: 16,
         ),
         onPressed: _handleLeave,
@@ -233,25 +341,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ),
               if (_isLeader) ...[
                 const SizedBox(width: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: AppColors.primary.withValues(alpha: 0.3),
-                      width: 0.5,
-                    ),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                  child: Text(
-                    "HOST",
-                    style: GoogleFonts.jetBrainsMono(
-                      fontSize: 8,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.accent,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                ),
+                _buildBadge("HOST", AppColors.accent),
+              ],
+              if (_isObserver) ...[
+                const SizedBox(width: 10),
+                _buildBadge("OBSERVER", Colors.amber),
               ],
             ],
           ),
@@ -271,11 +365,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                           ? const Color(0xFF4ADE80).withValues(alpha: opacity)
                           : AppColors.secondary.withValues(alpha: opacity),
                       boxShadow: _peerCount > 0
-                          ? [BoxShadow(
-                              color: const Color(0xFF4ADE80).withValues(alpha: 0.4),
-                              blurRadius: 4,
-                              spreadRadius: 1,
-                            )]
+                          ? [
+                              BoxShadow(
+                                color: const Color(0xFF4ADE80)
+                                    .withValues(alpha: 0.4),
+                                blurRadius: 4,
+                                spreadRadius: 1,
+                              )
+                            ]
                           : null,
                     ),
                   );
@@ -285,8 +382,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               Expanded(
                 child: Text(
                   groupAgenda != null && groupAgenda.isNotEmpty
-                    ? groupAgenda
-                    : "$_peerCount peers · ${_connectionStatus.toLowerCase()}",
+                      ? groupAgenda
+                      : "$_peerCount peers · ${_connectionStatus.toLowerCase()}",
                   style: _chatFontSmall.copyWith(
                     color: AppColors.secondary,
                     letterSpacing: 0.5,
@@ -299,6 +396,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         ],
       ),
       actions: [
+        // Nearby key share button — host only, when encryption is ready
+        if (_isLeader && _meshService.isEncryptionReady)
+          IconButton(
+            icon: const Icon(
+              Icons.wifi_tethering_rounded,
+              color: Color(0xFF4ADE80),
+              size: 20,
+            ),
+            tooltip: 'Share key via Nearby',
+            onPressed: _showShareKeyDialog,
+          ),
+        // Original NFC button — host only, encrypted group
         if (_isLeader && (widget.group?.isEncrypted ?? true))
           IconButton(
             icon: const Icon(
@@ -325,7 +434,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.people_outline_rounded,
                     size: 12,
                     color: AppColors.secondary,
@@ -354,17 +463,40 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildBadge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: color.withValues(alpha: 0.4),
+          width: 0.5,
+        ),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.jetBrainsMono(
+          fontSize: 8,
+          fontWeight: FontWeight.w500,
+          color: color,
+          letterSpacing: 1,
+        ),
+      ),
+    );
+  }
+
   Widget _buildAnimatedMessage(int index) {
     final message = _messages[index];
     final controller = _messageAnimControllers[index];
     final isMe = message.type == MessageType.sent;
-    
+
     return AnimatedBuilder(
       animation: controller,
       builder: (context, child) {
-        final slideOffset = (1.0 - Curves.easeOutCubic.transform(controller.value));
+        final slideOffset =
+            (1.0 - Curves.easeOutCubic.transform(controller.value));
         final opacity = Curves.easeOut.transform(controller.value);
-        
+
         return Transform.translate(
           offset: Offset(
             isMe ? slideOffset * 30 : -slideOffset * 30,
@@ -383,26 +515,52 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Widget _buildMessageBubble(ChatMessage message) {
     final isMe = message.type == MessageType.sent;
     final isSystem = message.senderName == "System";
-    
+
     if (isSystem) {
       return _buildSystemMessage(message);
     }
-    
+
+    // In observer mode, received messages look distinct (cipher style)
+    final isEncryptedDisplay = _isObserver && !isMe;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Column(
-        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment:
+            isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           if (!isMe)
             Padding(
               padding: const EdgeInsets.only(left: 2, bottom: 5),
-              child: Text(
-                message.senderName ?? "Unknown",
-                style: _chatFontSmall.copyWith(
-                  color: AppColors.accent.withValues(alpha: 0.7),
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.8,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    message.senderName ?? "Unknown",
+                    style: _chatFontSmall.copyWith(
+                      color: AppColors.accent.withValues(alpha: 0.7),
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  if (isEncryptedDisplay) ...[
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.lock_rounded,
+                      size: 9,
+                      color: Colors.amber.withValues(alpha: 0.7),
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      "ENCRYPTED",
+                      style: _chatFontSmall.copyWith(
+                        fontSize: 8,
+                        color: Colors.amber.withValues(alpha: 0.7),
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           Container(
@@ -411,21 +569,34 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             ),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: isMe ? AppColors.primary : AppColors.card,
+              color: isEncryptedDisplay
+                  ? Colors.amber.withValues(alpha: 0.06)
+                  : (isMe ? AppColors.primary : AppColors.card),
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(14),
                 topRight: const Radius.circular(14),
                 bottomLeft: Radius.circular(isMe ? 14 : 3),
                 bottomRight: Radius.circular(isMe ? 3 : 14),
               ),
-              border: isMe 
-                  ? null 
-                  : Border.all(color: AppColors.divider, width: 0.5),
+              border: isEncryptedDisplay
+                  ? Border.all(
+                      color: Colors.amber.withValues(alpha: 0.25),
+                      width: 0.5,
+                    )
+                  : (isMe
+                      ? null
+                      : Border.all(color: AppColors.divider, width: 0.5)),
             ),
             child: Text(
               message.text,
               style: _chatFont.copyWith(
-                color: isMe ? AppColors.background : AppColors.primary,
+                color: isEncryptedDisplay
+                    ? Colors.amber.withValues(alpha: 0.75)
+                    : (isMe ? AppColors.background : AppColors.primary),
+                fontSize: isEncryptedDisplay ? 11 : 13,
+                fontStyle:
+                    isEncryptedDisplay ? FontStyle.normal : FontStyle.normal,
+                letterSpacing: isEncryptedDisplay ? 0.3 : 0,
               ),
             ),
           ),
@@ -473,6 +644,56 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
+  // ── Observer mode — locked input replacement ────────────────────────────────
+  Widget _buildObserverBanner() {
+    return Container(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 14,
+        bottom: MediaQuery.of(context).viewInsets.bottom > 0 ? 14 : 30,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.background,
+        border: Border(
+          top: BorderSide(color: AppColors.divider, width: 0.5),
+        ),
+      ),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        decoration: BoxDecoration(
+          color: Colors.amber.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.amber.withValues(alpha: 0.25),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.visibility_off_rounded,
+              size: 14,
+              color: Colors.amber,
+            ),
+            const SizedBox(width: 10),
+            Text(
+              "OBSERVER MODE — read-only",
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 11,
+                color: Colors.amber.withValues(alpha: 0.85),
+                letterSpacing: 1,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildInputArea() {
     return Container(
       padding: EdgeInsets.only(
@@ -481,7 +702,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         top: 14,
         bottom: MediaQuery.of(context).viewInsets.bottom > 0 ? 14 : 30,
       ),
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         color: AppColors.background,
         border: Border(
           top: BorderSide(color: AppColors.divider, width: 0.5),
@@ -519,7 +740,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   ),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 18, 
+                    horizontal: 18,
                     vertical: 12,
                   ),
                 ),
@@ -540,9 +761,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: _isSendHeld
-                    ? AppColors.accent
-                    : AppColors.primary,
+                color: _isSendHeld ? AppColors.accent : AppColors.primary,
                 shape: BoxShape.circle,
               ),
               child: AnimatedRotation(
@@ -561,43 +780,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _startNfcHostExchange() async {
-    final nfc = _meshService.nfcService;
-    final nfcAvailable = await nfc.isAvailable();
-    
-    if (!nfcAvailable) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('NFC not available on this device.'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-      return;
-    }
-    
-    if (!mounted) return;
-    
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _NfcHostDialog(
-        meshService: _meshService,
-        onComplete: (String? joinerPubKey) async {
-          if (joinerPubKey != null) {
-            _addSystemMessage("New member's key exchanged via NFC");
-          }
-        },
-      ),
-    );
-  }
-
   @override
   void dispose() {
     _messageSubscription?.cancel();
     _statusSubscription?.cancel();
     _leaderSubscription?.cancel();
+    _keyReceivedSubscription?.cancel();
     _textController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
@@ -608,6 +796,182 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 }
 
+// ── Share Key Dialog (host picks a peer) ───────────────────────────────────────
+class _ShareKeyDialog extends StatelessWidget {
+  final Map<String, String> peerMap; // displayName -> endpointId
+  final Future<void> Function(String endpointId) onShare;
+  final String? groupKeyBase64;
+
+  const _ShareKeyDialog({
+    required this.peerMap,
+    required this.onShare,
+    this.groupKeyBase64,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.wifi_tethering_rounded,
+                    color: Color(0xFF4ADE80), size: 18),
+                const SizedBox(width: 10),
+                Text(
+                  'SHARE KEY VIA NEARBY',
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primary,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Select a connected peer to receive the encryption key.',
+              style: AppTextStyles.caption.copyWith(height: 1.5),
+            ),
+            // Show the actual key for manual sharing/copying
+            if (groupKeyBase64 != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                'OR COPY KEY MANUALLY',
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 9,
+                  color: AppColors.secondary,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 6),
+              GestureDetector(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: groupKeyBase64!));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Key copied to clipboard'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.divider, width: 0.5),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          groupKeyBase64!,
+                          style: GoogleFonts.jetBrainsMono(
+                            fontSize: 9,
+                            color: AppColors.secondary,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.copy_rounded,
+                          size: 13, color: AppColors.secondary),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 20),
+            Text(
+              'CONNECTED PEERS',
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 9,
+                color: AppColors.secondary,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...peerMap.entries.map((entry) {
+              return Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => onShare(entry.value),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF4ADE80).withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF4ADE80)
+                                  .withValues(alpha: 0.3),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.person_outline_rounded,
+                            size: 16,
+                            color: Color(0xFF4ADE80),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            entry.key,
+                            style: AppTextStyles.body.copyWith(fontSize: 13),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.send_rounded,
+                          size: 14,
+                          color: Color(0xFF4ADE80),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(
+                  'CLOSE',
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 11,
+                    color: AppColors.secondary,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── NFC Host Dialog (existing feature, kept) ────────────────────────────────────
 class _NfcHostDialog extends StatefulWidget {
   final MeshService meshService;
   final Future<void> Function(String? joinerPubKey) onComplete;
@@ -662,20 +1026,20 @@ class _NfcHostDialogState extends State<_NfcHostDialog>
       }
 
       final nfc = widget.meshService.nfcService;
-      
+
       await nfc.hostExchange(
         hostPublicKey: pubKey,
         treeStateJson: treeState,
       );
-      
+
       if (!mounted) return;
       setState(() => _status = "Tap the joiner's phone now...");
 
       await Future.delayed(const Duration(seconds: 8));
-      
+
       if (!mounted) return;
       setState(() => _status = "Reading joiner's key...");
-      
+
       final joinerKey = await nfc.readJoinerKey();
 
       if (!mounted) return;
